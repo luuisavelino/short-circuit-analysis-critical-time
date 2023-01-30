@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/gin-gonic/gin"
 	"github.com/luuisavelino/short-circuit-analysis-critical-time/models"
@@ -58,56 +59,54 @@ func Data(c *gin.Context) {
 	line := c.Params.ByName("line")
 	point := c.Params.ByName("point")
 
-	data, err := getDataFromAPI(host + ":" + port + "/api/v2/files/" + fileId + "/zbus/short-circuit/" + line + "/point/" + point)
-	if err != nil {
-		fmt.Println("Erro ao obter dados da API:", err)
-		jsonError(c, err)
-	}
-	json.Unmarshal(data, &models.AllZbusBeforeFault)
+	var ch1, ch2, ch3, ch4, ch5 = make(chan []byte), make(chan []byte), make(chan []byte), make(chan []byte), make(chan []byte)
 
-	data, err = getDataFromAPI(host + ":" + port + "/api/v2/files/" + fileId + "/zbus/atuacao/" + line)
-	if err != nil {
-		fmt.Println("Erro ao obter dados da API:", err)
-		jsonError(c, err)
-	}
-	json.Unmarshal(data, &models.AllZbusAfterFault)
 
-	data, err = getDataFromAPI(host + ":" + "8080" + "/api/v2/files/" + fileId + "/types/1/elements")
-	if err != nil {
-		fmt.Println("Erro ao obter dados da API:", err)
-		jsonError(c, err)
-	}
-	json.Unmarshal(data, &models.Elements)
+	var err = make(chan error)
 
-	data, err = getDataFromAPI(host + ":" + port + "/api/v2/files/" + fileId + "/zbus/short-circuit/" + line + "/point/" + point + "/bars")
-	if err != nil {
-		fmt.Println("Erro ao obter dados da API:", err)
-		jsonError(c, err)
-	}
-	json.Unmarshal(data, &models.BarrasAdicionadasBefore)
+	var wg sync.WaitGroup
+	wg.Add(5)
 
-	data, err = getDataFromAPI(host + ":" + port + "/api/v2/files/" + fileId + "/zbus/atuacao/" + line + "/bars")
-	if err != nil {
-		fmt.Println("Erro ao obter dados da API:", err)
-		jsonError(c, err)
-	}
-	json.Unmarshal(data, &models.BarrasAdicionadasAfter)
+	go getDataFromAPI(&wg, ch1, err, host+":"+port+"/api/v2/files/"+fileId+"/zbus/short-circuit/"+line+"/point/"+point)
+	json.Unmarshal(<-ch1, &models.AllZbusBeforeFault)
 
+	go getDataFromAPI(&wg, ch2, err, host+":"+port+"/api/v2/files/"+fileId+"/zbus/atuacao/"+line)
+	json.Unmarshal(<-ch2, &models.AllZbusAfterFault)
+
+	go getDataFromAPI(&wg, ch3, err, host+":"+"8080"+"/api/v2/files/"+fileId+"/types/1/elements")
+	json.Unmarshal(<-ch3, &models.Elements)
+
+	go getDataFromAPI(&wg, ch4, err, host+":"+port+"/api/v2/files/"+fileId+"/zbus/short-circuit/"+line+"/point/"+point+"/bars")
+	json.Unmarshal(<-ch4, &models.BarrasAdicionadasBefore)
+
+	go getDataFromAPI(&wg, ch5, err, host+":"+port+"/api/v2/files/"+fileId+"/zbus/atuacao/"+line+"/bars")
+	json.Unmarshal(<-ch5, &models.BarrasAdicionadasAfter)
+	
+	if <-err != nil {
+		fmt.Println("Erro ao obter dados da API:", <-err)
+		jsonError(c, <-err)
+		return
+	}
+
+	wg.Wait()
 }
 
-func getDataFromAPI(url string) ([]byte, error) {
-	fmt.Println(url)
+func getDataFromAPI(wg *sync.WaitGroup, c chan<- []byte, e chan<- error, url string) {
+	wg.Done()
 	response, err := http.Get(url)
 	if err != nil {
 		fmt.Println("erro 1")
-		return nil, err
+		e <- err
+		return
 	}
 
 	responseData, err := ioutil.ReadAll(response.Body)
 	if err != nil {
 		fmt.Println("erro 2")
-		return nil, err
+		e <- err
+		return
 	}
 
-	return responseData, nil
+	c <- responseData
+	e <- err
 }
