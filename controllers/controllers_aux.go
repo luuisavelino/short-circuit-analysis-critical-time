@@ -2,7 +2,6 @@ package controllers
 
 import (
 	"encoding/json"
-	"fmt"
 	"io/ioutil"
 	"net/http"
 	"strings"
@@ -54,13 +53,12 @@ func GetAnalysis(BarraCurtoCircuito string) map[string]map[string]float64 {
 	return systemInfo
 }
 
-func Data(c *gin.Context) {
+func Data(c *gin.Context) error {
 	fileId := c.Params.ByName("fileId")
 	line := c.Params.ByName("line")
 	point := c.Params.ByName("point")
 
 	var ch1, ch2, ch3, ch4, ch5 = make(chan []byte), make(chan []byte), make(chan []byte), make(chan []byte), make(chan []byte)
-
 
 	var err = make(chan error)
 
@@ -81,28 +79,30 @@ func Data(c *gin.Context) {
 
 	go getDataFromAPI(&wg, ch5, err, host+":"+port+"/api/v2/files/"+fileId+"/zbus/atuacao/"+line+"/bars")
 	json.Unmarshal(<-ch5, &models.BarrasAdicionadasAfter)
-	
-	if <-err != nil {
-		fmt.Println("Erro ao obter dados da API:", <-err)
-		jsonError(c, <-err)
-		return
+
+	for erros := range err {
+		if erros != nil {
+			return erros
+		}
 	}
 
 	wg.Wait()
+
+	return nil
 }
 
 func getDataFromAPI(wg *sync.WaitGroup, c chan<- []byte, e chan<- error, url string) {
 	wg.Done()
 	response, err := http.Get(url)
 	if err != nil {
-		fmt.Println("erro 1")
+		c <- nil
 		e <- err
 		return
 	}
 
 	responseData, err := ioutil.ReadAll(response.Body)
 	if err != nil {
-		fmt.Println("erro 2")
+		c <- nil
 		e <- err
 		return
 	}
